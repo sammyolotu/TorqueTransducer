@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ESP32 Web BLE App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        /* Basic styling for readability */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        #inputContainer, #sentDataContainer, #receivedDataContainer {
+            margin-bottom: 20px;
+        }
+        label {
+            margin-right: 10px;
+        }
+        #inputContainer input {
+            width: 50px;
+        }
+        #sentDataHeaders span, #receivedDataHeaders span, #sentDataValues span, #receivedDataValues span {
+            display: inline-block;
+            width: 40px;
+            text-align: center;
+        }
+        #sentDataHeaders, #receivedDataHeaders {
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+  <h1>ESP32 Web BLE Application</h1>
+  <button id="connectBleButton">Connect to BLE Device</button>
+  <button id="disconnectBleButton">Disconnect BLE Device</button>
+  <p>BLE state: <strong><span id="bleState" style="color:#d13a30;">Disconnected</span></strong></p>
+
+  <!-- Input Fields -->
+  <h2>Input Data</h2>
+  <div id="inputContainer">
+    <label>A: <input type="number" id="inputA" min="0" max="255" value="0"></label>
+    <label>B: <input type="number" id="inputB" min="0" max="255" value="0"></label>
+    <label>C: <input type="number" id="inputC" min="0" max="255" value="0"></label>
+    <label>D: <input type="number" id="inputD" min="0" max="510" value="0"></label> <!-- Max 510 because it's the sum of two bytes -->
+    <label>E: <input type="number" id="inputE" min="0" max="255" value="0"></label>
+    <label>F: <input type="number" id="inputF" min="0" max="255" value="0"></label>
+  </div>
+  <button id="sendDataButton">Send Data</button>
+
+  <!-- Sent Data Display -->
+  <h2>Sent Data</h2>
+  <div id="sentDataContainer">
+    <!-- Headers -->
+    <div id="sentDataHeaders">
+      <span>A</span>
+      <span>B</span>
+      <span>C</span>
+      <span>D1</span>
+      <span>D2</span>
+      <span>E</span>
+      <span>F</span>
+    </div>
+    <!-- Data -->
+    <div id="sentDataValues">
+      <!-- Values will be populated here -->
+    </div>
+  </div>
+
+  <!-- Received Data Display -->
+  <h2>Received Data</h2>
+  <div id="receivedDataContainer">
+    <!-- Headers -->
+    <div id="receivedDataHeaders">
+      <span>G</span>
+      <span>H</span>
+      <span>I</span>
+      <span>J</span>
+      <span>K</span>
+      <span>L</span>
+      <span>M</span>
+      <span>N</span>
+      <span>O</span>
+      <span>P</span>
+      <span>Q</span>
+      <span>R</span>
+      <span>S</span>
+      <span>T</span>
+    </div>
+    <!-- Data -->
+    <div id="receivedDataValues">
+      <!-- Values will be populated here -->
+    </div>
+  </div>
+
+  <p><a href="https://randomnerdtutorials.com/">Created by RandomNerdTutorials.com</a></p>
+</body>
+<!-- Include your JavaScript code below -->
+<script>
+// DOM Elements
+const connectButton = document.getElementById('connectBleButton');
+const disconnectButton = document.getElementById('disconnectBleButton');
+const sendDataButton = document.getElementById('sendDataButton');
+const bleStateContainer = document.getElementById('bleState');
+
+// Input fields
+const inputA = document.getElementById('inputA');
+const inputB = document.getElementById('inputB');
+const inputC = document.getElementById('inputC');
+const inputD = document.getElementById('inputD');
+const inputE = document.getElementById('inputE');
+const inputF = document.getElementById('inputF');
+
+// Sent Data Container
+const sentDataValues = document.getElementById('sentDataValues');
+
+// Received Data Container
+const receivedDataValues = document.getElementById('receivedDataValues');
+
+// Define BLE Device Specs
+var deviceName ='ESP32';
+var bleService = '19b10000-e8f2-537e-4f6c-d104768a1214';
+var dataToServerCharacteristicUUID = '19b10002-e8f2-537e-4f6c-d104768a1214'; // Characteristic to send data to server
+var dataFromServerCharacteristicUUID= '19b10001-e8f2-537e-4f6c-d104768a1214'; // Characteristic to receive data from server
+
+// Global Variables to Handle Bluetooth
+var bleServer;
+var bleServiceFound;
+var dataToServerCharacteristic;
+var dataFromServerCharacteristic;
+
+connectButton.addEventListener('click', (event) => {
+    if (isWebBluetoothEnabled()){
+        connectToDevice();
+    }
+});
+
+disconnectButton.addEventListener('click', disconnectDevice);
+
+sendDataButton.addEventListener('click', sendDataToServer);
+
+// Check if BLE is available in your Browser
+function isWebBluetoothEnabled() {
+    if (!navigator.bluetooth) {
+        console.log("Web Bluetooth API is not available in this browser!");
+        bleStateContainer.innerHTML = "Web Bluetooth API is not available in this browser!";
+        return false
+    }
+    console.log('Web Bluetooth API supported in this browser.');
+    return true
+}
+
+// Connect to BLE Device and Enable Notifications
+function connectToDevice(){
+    console.log('Initializing Bluetooth...');
+    navigator.bluetooth.requestDevice({
+        filters: [{name: deviceName}],
+        optionalServices: [bleService]
+    })
+    .then(device => {
+        console.log('Device Selected:', device.name);
+        bleStateContainer.innerHTML = 'Connected to device ' + device.name;
+        bleStateContainer.style.color = "#24af37";
+        device.addEventListener('gattservicedisconnected', onDisconnected);
+        return device.gatt.connect();
+    })
+    .then(gattServer =>{
+        bleServer = gattServer;
+        console.log("Connected to GATT Server");
+        return bleServer.getPrimaryService(bleService);
+    })
+    .then(service => {
+        bleServiceFound = service;
+        console.log("Service discovered:", service.uuid);
+        return Promise.all([
+            service.getCharacteristic(dataToServerCharacteristicUUID),
+            service.getCharacteristic(dataFromServerCharacteristicUUID)
+        ]);
+    })
+    .then(characteristics => {
+        dataToServerCharacteristic = characteristics[0];
+        dataFromServerCharacteristic = characteristics[1];
+
+        // Enable notifications from the server
+        dataFromServerCharacteristic.addEventListener('characteristicvaluechanged', handleCharacteristicChange);
+        return dataFromServerCharacteristic.startNotifications();
+    })
+    .then(() => {
+        console.log("Notifications Started.");
+    })
+    .catch(error => {
+        console.log('Error: ', error);
+    });
+}
+
+function onDisconnected(event){
+    console.log('Device Disconnected:', event.target.device.name);
+    bleStateContainer.innerHTML = "Device disconnected";
+    bleStateContainer.style.color = "#d13a30";
+    // Optionally, you can try to reconnect automatically
+    // connectToDevice();
+}
+
+function sendDataToServer() {
+    if (bleServer && bleServer.connected) {
+        // Read values from input fields
+        let a = parseInt(inputA.value) || 0;
+        let b = parseInt(inputB.value) || 0;
+        let c = parseInt(inputC.value) || 0;
+        let d = parseInt(inputD.value) || 0; // Input D is the sum of elements 4 and 5
+        let e = parseInt(inputE.value) || 0;
+        let f = parseInt(inputF.value) || 0;
+
+        // Ensure values are within byte range
+        a = a & 0xFF;
+        b = b & 0xFF;
+        c = c & 0xFF;
+        e = e & 0xFF;
+        f = f & 0xFF;
+
+        // Prepare the array of 7 bytes
+        let dataToSend = new Uint8Array(7);
+        dataToSend[0] = a;
+        dataToSend[1] = b;
+        dataToSend[2] = c;
+
+        // Split input D into two bytes (elements 4 and 5)
+        let halfD = Math.floor(d / 2);
+        dataToSend[3] = halfD & 0xFF;
+        dataToSend[4] = (d - halfD) & 0xFF; // Ensure the sum equals input D
+
+        dataToSend[5] = e;
+        dataToSend[6] = f;
+
+        // Log the derived elements for debugging
+        console.log("Derived Elements:");
+        console.log("Element 4 (dataToSend[3]):", dataToSend[3]);
+        console.log("Element 5 (dataToSend[4]):", dataToSend[4]);
+        console.log("Sum of Elements 4 and 5:", dataToSend[3] + dataToSend[4]);
+
+        // Send the data to the server
+        dataToServerCharacteristic.writeValue(dataToSend)
+        .then(() => {
+            console.log("Data sent to server:", dataToSend);
+            displaySentData(dataToSend);
+        })
+        .catch(error => {
+            console.error("Error writing to the characteristic: ", error);
+        });
+    } else {
+        console.error("Bluetooth is not connected. Cannot write to characteristic.");
+        window.alert("Bluetooth is not connected. Cannot write to characteristic. \n Connect to BLE first!");
+    }
+}
+
+function displaySentData(dataArray) {
+    // Clear previous data
+    sentDataValues.innerHTML = '';
+
+    // Display each byte with a gap
+    dataArray.forEach((byteValue, index) => {
+        let span = document.createElement('span');
+        span.textContent = byteValue;
+        span.style.marginRight = '10px'; // Add gap between bytes
+        sentDataValues.appendChild(span);
+    });
+}
+
+function handleCharacteristicChange(event){
+    const value = event.target.value;
+    let receivedData = [];
+    for (let i = 0; i < value.byteLength; i++) {
+        receivedData.push(value.getUint8(i));
+    }
+    console.log("Received data from server: ", receivedData);
+    displayReceivedData(receivedData);
+}
+
+function displayReceivedData(dataArray) {
+    // Clear previous data
+    receivedDataValues.innerHTML = '';
+
+    // Display each byte with a gap
+    dataArray.forEach((byteValue, index) => {
+        let span = document.createElement('span');
+        span.textContent = byteValue;
+        span.style.marginRight = '10px'; // Add gap between bytes
+        receivedDataValues.appendChild(span);
+    });
+}
+
+function disconnectDevice() {
+    console.log("Disconnect Device.");
+    if (bleServer && bleServer.connected) {
+        dataFromServerCharacteristic.stopNotifications()
+            .then(() => {
+                console.log("Notifications Stopped");
+                return bleServer.disconnect();
+            })
+            .then(() => {
+                console.log("Device Disconnected");
+                bleStateContainer.innerHTML = "Device Disconnected";
+                bleStateContainer.style.color = "#d13a30";
+            })
+            .catch(error => {
+                console.log("An error occurred:", error);
+            });
+    } else {
+        console.error("Bluetooth is not connected.");
+        window.alert("Bluetooth is not connected.");
+    }
+}
+</script>
+</html>
